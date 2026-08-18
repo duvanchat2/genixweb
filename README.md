@@ -1,6 +1,15 @@
 # genixweb
 
-Automatizaciones para los sitios WordPress de Genix.
+Automatizaciones y skills de Claude Code para los sitios WordPress de Genix.
+
+Dos cosas viven en `.claude/skills/`:
+
+- **`wp-genix-publish`** — nuestra, documentada abajo.
+- **18 skills oficiales de WordPress** (`wordpress-router`, `wp-*`, `wpds`, `blueprint`)
+  copiadas de [WordPress/agent-skills](https://github.com/WordPress/agent-skills)
+  bajo GPL-2.0-or-later. Cubren desarrollo de bloques, temas de bloques, plugins, REST
+  API, WP-CLI, rendimiento, PHPStan y Playground. Detalle de procedencia y cómo
+  actualizarlas en [`.claude/skills/VENDORED.md`](.claude/skills/VENDORED.md).
 
 ## `wp-genix-publish`
 
