@@ -1,280 +1,258 @@
 ---
 name: wp-genix-publish
-description: Publish a standalone HTML page (exported from Claude Design / "Diseña con Claude") as a WordPress page on one of Duvan's Genix sites (genixacademy.com, academiagenix.com, triunfagenix.com, miraveoptica.com, productosdigitales.genixacademy.com, email.triunfagenix.com). Use whenever the user says things like "sube esto a WordPress", "publica esta página en Genix", "esto lo hice en Claude Design, súbelo", "ponlo en vivo", "súbelo a la web", or pastes/attaches an exported HTML file plus asks for it to go live. Covers reaching wp-admin via Hostinger SSO (no password needed), extracting a pasted chat image to a real file, uploading media via the WordPress REST API (the browser file-upload tool is unreliable here), safely writing raw HTML into a page without wpautop corrupting the CSS, the Hello Elementor "boxed container" full-bleed fix, hiding the theme title without breaking the slug/SEO, auditing every CTA link, and verifying the save actually landed. Do NOT use for building the design itself — only for taking an already-finished HTML export and getting it live on WordPress.
+description: |
+  Publish a standalone HTML page (exported from Claude Design / "Diseña con Claude") as a
+  WordPress page on one of Duvan's Genix sites (genixacademy.com, academiagenix.com,
+  triunfagenix.com, miraveoptica.com, productosdigitales.genixacademy.com,
+  email.triunfagenix.com). Use whenever the user says things like "sube esto a WordPress",
+  "publica esta página en Genix", "esto lo hice en Claude Design, súbelo", or pastes/attaches
+  an exported HTML file plus asks it to go live. Covers: reaching wp-admin via Hostinger SSO
+  (no password needed), extracting a pasted chat image to a real file, uploading media via
+  the REST API (the browser file-upload tool is unreliable here), safely writing raw HTML
+  into a WordPress page without wpautop corrupting it, and the Hello Elementor "boxed
+  container" full-bleed fix. Do not use for building the design itself — only for taking an
+  already-finished HTML export and getting it live on WordPress.
+allowed-tools:
+  - Bash
+  - Read
+  - Edit
+  - Write
+  - Glob
+  - Grep
+  - AskUserQuestion
 ---
 
-# Publicar una página HTML en WordPress (sitios Genix)
+# Publishing a Claude-Design HTML page to Genix WordPress
 
-Toma un HTML ya terminado (normalmente exportado de Claude Design) y lo deja publicado
-en el sitio WordPress correcto, sin romper el CSS y sin romper el SEO.
+This skill documents a working, battle-tested procedure. Every gotcha below was hit for real
+in a live session — don't skip them, they are not theoretical.
 
-**Habla con el usuario en español.** Las instrucciones de abajo son para ti; los mensajes
-al usuario van en español, cortos y concretos.
+## 0. Prerequisites — what you need from the user
 
-**No rediseñes.** Esta skill no cambia el diseño. Si algo del HTML está roto, dilo y
-pregunta — no lo "mejores" por tu cuenta. Las únicas ediciones permitidas sin preguntar
-son las de esta guía: rutas de imágenes, links de CTA que el usuario te dio, y el CSS de
-arreglo del tema.
+- The exported HTML file (usually in `Downloads`, e.g. `*-wordpress.html`). Read it fully
+  with `Read` before touching it.
+- Which site it goes on. If not stated, ask — don't assume `genixacademy.com`. Known sites
+  (from Hostinger hPanel → Sitios web):
+  - `genixacademy.com` (main site)
+  - `academiagenix.com`
+  - `triunfagenix.com`
+  - `miraveoptica.com`
+  - `productosdigitales.genixacademy.com`
+  - `email.triunfagenix.com`
+- Any real destination links that should replace placeholders (payment links, CTAs).
+- Any image the design references but doesn't embed. If the user pasted it directly in the
+  chat (not as a file), see §2.
 
-## Orden de trabajo
+## 1. Get browser access to wp-admin (no password needed)
 
-Sigue estos pasos en orden. Cada uno tiene su sección más abajo.
+Duvan is logged into Hostinger in his real Chrome (via claude-in-chrome). Do **not** ask for
+credentials — just drive the browser:
 
-1. Confirmar sitio destino y si es página nueva o reemplazo
-2. Dejar el HTML en un archivo local
-3. Imágenes: extraer las pegadas en el chat y subirlas por REST
-4. Entrar a wp-admin por SSO de Hostinger
-5. Conseguir credenciales REST (Application Password)
-6. Escribir el HTML en la página sin que wpautop lo destroce
-7. Arreglos de tema (full-bleed + ocultar título)
-8. Auditar todos los CTAs
-9. Verificar que el guardado se aplicó de verdad
-10. Confirmar con el usuario antes de publicar
+1. `navigate` to `https://hpanel.hostinger.com` (or reuse an existing tab) — session is
+   already authenticated as user "genix".
+2. Go to **Sitios web** in the left nav.
+3. Find the target site's row and click **Admin WordPress**. This opens a **new tab** with an
+   SSO link straight into `/wp-admin` — no login prompt. Grab that tab's `tabId` from the
+   `tabs_context_mcp` response.
+4. If you ever see a real password field, stop and tell the user — SSO should always work for
+   these sites.
+
+## 2. If the design references a pasted-in-chat image
+
+The user often pastes a photo directly into the chat instead of giving a file path. That image
+is NOT on disk by default, but it IS embedded as base64 in this session's transcript. Extract it:
+
+```python
+import json, base64, os
+path = r'<this session's .jsonl under ~/.claude/projects/.../SESSION_ID.jsonl>'
+with open(path, encoding='utf-8') as f:
+    lines = f.readlines()
+for line in lines:
+    if '"type": "image"' in line.replace(' ', '') or ('"type":"image"' in line and 'base64' in line):
+        obj = json.loads(line)
+        # walk obj recursively looking for {"type":"image","source":{"type":"base64",...}}
+        # the LAST user-role message with an image block is almost always the one just pasted
+```
+Find the block belonging to a `role: "user"` message near the end of the file (not older
+screenshots from earlier in the session), decode it, `Read` it back as an image to confirm
+it's the right one, then use it in §4. Give it a descriptive filename (e.g.
+`terremoto-colombia-defensa-civil.jpg`), not a generic one — a WordPress REST upload with a
+generic/mismatched name has been flaky in this environment for unclear reasons; a specific
+slug-style name has always worked.
+
+## 3. Prepare the HTML
+
+Full exported files look like `<!doctype html><html><head>...<style>...</style></head>
+<body>...<script>...</script></body></html>`.
+
+You do **not** paste the whole document into WordPress. Strip the outer wrapper and keep only:
+`<link>` font tags + `<style>...</style>` + everything inside `<body>` + the trailing
+`<script>...</script>`. Do this with a small Python/Bash slice on line ranges, not by hand —
+it's long and easy to mis-copy.
+
+Apply any requested edits to the **source file first** (Edit tool), then re-extract, so the
+extracted content and the source file never drift:
+- Swap placeholder CTA links for the real payment/destination link — check for **every**
+  occurrence (`grep -n "href="`), including any duplicate mentions in plain text like
+  "seguro vía X" that name the old provider.
+- Replace image placeholders with a real `<img src="...">` once you know the final media URL
+  (see §4 — you'll know the URL before you even upload, since WP media URLs are
+  predictable: `https://SITE/wp-content/uploads/YYYY/MM/filename.ext`).
+
+## 4. Upload the image via the REST API — not the browser file-upload tool
+
+`mcp__claude-in-chrome__file_upload` is unreliable in this environment: real, existing file
+paths intermittently fail with a bogus `paths: expected array, received undefined` schema
+error that has nothing to do with the actual input (confirmed reproducible — it's specific to
+this tool/harness combo, not your JSON). Don't burn time debugging it. Use the REST API
+instead:
+
+1. In wp-admin, go to **Perfil** (`/wp-admin/profile.php`), scroll to **Contraseñas de
+   aplicación**, type a throwaway name (e.g. `claude-upload-temp`), click **Añadir nueva
+   contraseña de aplicación**.
+2. Read the generated password precisely — zoom the screenshot on that exact row, don't guess
+   from a blurry read. If unsure, revoke and generate a fresh one rather than retry-guessing.
+3. Upload with curl (username is `admin` unless `wp-admin/users.php` shows otherwise — check,
+   don't assume):
+
+```bash
+curl -s -u "admin:XXXX XXXX XXXX XXXX XXXX XXXX" \
+  -X POST "https://SITE/wp-json/wp/v2/media" \
+  -H "Content-Disposition: attachment; filename=descriptive-name.jpg" \
+  -H "Content-Type: image/jpeg" \
+  --data-binary @"/path/to/file.jpg" \
+  -o response.json -w "HTTP_STATUS:%{http_code}\n"
+```
+A 201 means success; `response.json`'s `source_url` is the final image URL — use it in your
+`<img>` tag (it will match the predictable path from §3).
+
+4. **After you're done with the whole task**, go back to Perfil and click **Anular** on the
+   throwaway application password (or **Anular todas**). Don't leave standing credentials.
+
+## 5. Write the content into the WordPress page — the safe way
+
+Create the page: `/wp-admin/post-new.php?post_type=page`. Type the title in the title field
+normally (click + type is fine there — it's a plain textbox).
+
+For the **body**, do NOT type character-by-character with the `computer` tool for anything
+over a couple hundred characters — it's slow and, worse, has caused stray leftover characters
+in past runs. Also don't blindly trust `ctrl+a` / `Backspace` combos on Gutenberg blocks —
+one wrong Backspace on an empty paragraph block can cascade and wipe the entire page content
+(happened in this exact workflow; recovered with `ctrl+z`, do that immediately if it happens,
+don't try to "fix forward").
+
+The reliable method:
+
+1. Switch to the **whole-document raw code editor**: click the "⋮ Opciones" menu → **Editor
+   de código** (or press `Ctrl+Shift+Alt+M` after clicking into the page body first so focus
+   is on the document, not a floating menu). Confirm you're in it by checking
+   `document.querySelectorAll('textarea').length === 2` via `javascript_tool` (index 0 =
+   title, index 1 = body).
+2. Set the body textarea's value via JS using the native setter trick, so React/Gutenberg
+   picks up the change as if the user typed it:
+
+```js
+const ta = document.querySelectorAll('textarea')[1];
+const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+nativeSetter.call(ta, YOUR_FULL_CONTENT_STRING);
+ta.dispatchEvent(new Event('input', { bubbles: true }));
+```
+   This is the same trick used to fix stray characters later — same tool, same safety
+   profile: it's editing a legitimate content field the user asked you to fill, not a
+   restricted target, so it isn't blocked and it isn't a hack around anything.
+3. Click **Guardar** (or **Publicar** on a fresh draft) via its `ref` from `find`, then
+   **verify the save actually happened** by checking network requests:
+   `read_network_requests` filtered on `pages/<ID>` — you want a 200 on
+   `wp-json/wp/v2/pages/<ID>?_locale=user` (the real save), not just
+   `.../pages/<ID>/autosaves` (autosave only, page stays stale). A single click sometimes
+   only fires the autosave — click again and re-check if you only see the autosave request.
+4. Load the live/preview URL and re-verify with `javascript_tool` (link counts, absence of
+   stray text nodes, title) rather than trusting a screenshot alone — screenshots in this
+   browser occasionally return a stale/cropped frame or the CDP call times out.
+
+## 6. Known WordPress/theme gotchas to always check
+
+**wpautop mangles raw HTML/CSS edits that create a blank line.** WordPress's `wpautop` filter
+runs on page content and inserts `<p>`/`</p>` around anything that looks like a paragraph
+break (blank line). If you inject a CSS fix into an existing `<style>` block later (e.g. via
+the same JS-setter trick, inserting text before `</style>`), do **not** wrap it in a
+leading/trailing newline — that creates the blank-line pattern and wpautop will splice literal
+`</p>`/`<p>` text into the middle of your CSS, silently breaking just that rule (the browser's
+CSS parser drops the malformed rule; nothing else warns you). Insert single-line, no
+surrounding blank line — appended directly after the last rule's `}` with nothing but the new
+rule and its own `}` before `</style>`. After any such edit, re-fetch the live page and check
+`getComputedStyle` on the affected element rather than trusting that "it's in the `<style>`
+tag now" means it applied.
+
+**Hello Elementor / Elementor theme boxes page content to `max-width:1140px`.** A full-bleed
+design (edge-to-edge colored sections, sticky navbar) will look "squeezed with margins" on
+both desktop and mobile until you break out of it. Fix (add to the page's own `<style>`
+block, single line per rule per the wpautop note above):
+```css
+.navbar,.hero,section.section,footer{width:100vw;margin-left:calc(50% - 50vw);margin-right:calc(50% - 50vw)}
+body.wp-singular .site-main,body.wp-singular main{max-width:none!important;margin:0!important;padding:0!important}
+```
+Inner content wrappers (e.g. `.wrap` at ~760px, centered) stay as designed — only the
+section-level background containers need to go full width.
+
+**The theme's own gray page-title header (`.page-header` / `h1.entry-title`) shows above your
+design** and looks out of place with a custom full-bleed page. Hide it with CSS — **never
+change the WP page's actual Title field** to do this, that field drives the URL slug and SEO:
+```css
+body.page-id-<ID> .page-header{display:none!important;margin:0!important;padding:0!important}
+```
+Get `<ID>` from the page-id-NNNN class already on `<body>`, or from the `post=` query param
+in the editor URL.
+
+**Check every CTA's actual `href`, not just the visible label.** A design often has a "hero"
+CTA pointing straight to the destination but secondary CTAs (sticky navbar button, mid-page
+repeats) still on a same-page anchor like `href="#donar"`. If the user says a specific button
+"doesn't have the link", it usually means exactly this — audit **all** matching buttons:
+```js
+Array.from(document.querySelectorAll('.navbar a, a.btn')).map(a => ({text:a.textContent.trim(), href:a.getAttribute('href')}))
+```
+
+## 7. Before publishing
+
+Publishing a page is publishing public content — get explicit confirmation before flipping a
+draft to Publish, per standard rules. If the page already ended up published earlier in the
+flow (WordPress's "Guardar" on a page created via `post-new.php` can end up publish-status
+depending on prior state — verify with `status` in the REST response or the button label:
+"Guardar" = already published, "Publicar" = still a draft), say so plainly rather than
+re-asking permission for something already live, and instead confirm the fixes look right.
+
+## 8. Final deliverable
+
+Give the user the clean permalink (e.g. `https://SITE/page-slug/`), not the `?page_id=X&preview=true`
+query form, once it's actually published.
 
 ---
 
-## 1. Confirmar destino
+## 9. Helper scripts bundled with this skill
 
-Antes de tocar nada, ten claro:
+Added alongside the procedure above. They automate the fiddly steps; the browser procedure
+stays the source of truth.
 
-- **Qué sitio.** Ver `references/sitios.md`. Si el usuario no lo dijo y hay ambigüedad,
-  pregunta con `AskUserQuestion` — no adivines: publicar en el sitio equivocado es visible
-  para sus clientes.
-- **Página nueva o reemplazo.** Si es reemplazo, pide/confirma la URL exacta o el ID.
-- **Slug deseado** si es nueva.
-
-Si la página destino ya existe y fue hecha con Elementor (tiene meta `_elementor_edit_mode`
-= `builder`), escribir en `content` por REST **no se verá**: Elementor renderiza su propio
-dato. En ese caso crea una página nueva o avísale al usuario antes de continuar.
-`scripts/wp_rest.py get-page` te dice si la página tiene datos de Elementor.
-
-## 2. Dejar el HTML en un archivo
-
-Guarda el export en el scratchpad como `page.html`. Trabaja siempre sobre el archivo,
-nunca pegando HTML gigante en comandos.
-
-Si el usuario adjuntó el archivo, úsalo tal cual. Si lo pegó en el chat, escríbelo a
-archivo primero con un heredoc `<<'EOF'` (comillas simples: evita que bash expanda `$`).
-
-## 3. Imágenes
-
-### 3a. Imágenes pegadas en el chat
-
-Cuando el usuario pega una captura en la conversación, la imagen vive en el transcript de
-la sesión como base64, no como archivo. Extráela:
-
-```bash
-python3 scripts/extract_pasted_images.py --out-dir "$SCRATCH/img"
-```
-
-Lista las que encuentre (más reciente primero) y confirma con el usuario cuál es si hay
-varias. `--list` sólo enumera sin escribir archivos.
-
-### 3b. Subirlas a la Biblioteca de Medios
-
-**Usa la REST API, no el selector de archivos del navegador.** El file-picker de la
-automatización de navegador falla o se cuelga con el uploader de WP.
-
-```bash
-python3 scripts/wp_rest.py upload-media "$SCRATCH/img/hero.png" \
-  --title "Hero curso X" --alt "Portada del curso X"
-```
-
-Devuelve el `id` y el `source_url`. **Reemplaza en `page.html` todo `src` local, `data:`
-URI o URL externa por el `source_url` devuelto.** Una imagen que sigue apuntando a un
-archivo local o a un `data:` URI enorme es un fallo: la primera se ve rota, la segunda
-infla la fila de la base de datos.
-
-Verifica después de reemplazar que no queden rutas locales:
-
-```bash
-grep -nEo 'src="[^"]*"' page.html | grep -vE 'https?://' || echo "OK: sin rutas locales"
-```
-
-## 4. Entrar a wp-admin (SSO de Hostinger)
-
-No pidas contraseña de WordPress. La ruta es:
-
-1. Abre `https://hpanel.hostinger.com/` (la sesión de Hostinger del usuario ya suele estar
-   activa en el navegador).
-2. Ve a la lista de sitios/hosting y elige el dominio correcto.
-3. Usa el botón de acceso al panel de WordPress (según la versión de hPanel aparece como
-   **Admin Panel**, **Editar sitio web** o **Panel de WordPress**). Ese botón hace login
-   automático y te deja dentro de `/wp-admin`.
-
-Si la sesión de Hostinger no está activa, **no intentes adivinar credenciales**: pídele al
-usuario que inicie sesión en hPanel y avísale que sigues cuando esté dentro.
-
-Comprueba que estás dentro pidiendo `/wp-admin/` y confirmando que responde el dashboard,
-no la pantalla de login.
-
-## 5. Credenciales REST
-
-Los pasos 3b, 6 y 9 usan la REST API. La forma estable de autenticarte es una
-**Application Password** (no la contraseña real de la cuenta):
-
-1. En wp-admin: **Usuarios → Perfil** (`/wp-admin/profile.php`).
-2. Baja a **Application Passwords**, nombre `claude-publish`, **Add New**.
-3. Copia la contraseña generada (formato `xxxx xxxx xxxx xxxx xxxx xxxx`).
-
-Exporta las variables antes de usar los scripts:
-
-```bash
-export WP_SITE="https://academiagenix.com"
-export WP_USER="<usuario admin>"
-export WP_APP_PASSWORD="xxxx xxxx xxxx xxxx xxxx xxxx"
-```
-
-Reglas:
-- **Nunca** escribas la Application Password en un archivo del repo, en un commit, ni en
-  un mensaje que quede en el historial de GitHub. Sólo en variables de entorno de la sesión.
-- Si el usuario prefiere no crear una, existe la ruta alternativa por nonce desde el
-  navegador ya logueado — ver `references/rest-api.md`.
-- Si la REST API devuelve 401/403 en un sitio, ver `references/troubleshooting.md`.
-
-Prueba rápida de que funciona:
-
-```bash
-python3 scripts/wp_rest.py whoami
-```
-
-## 6. Escribir el HTML sin que WordPress lo rompa
-
-Este es el paso donde históricamente se rompe todo. Dos mecanismos de WordPress atacan tu
-HTML:
-
-**`wpautop`** — convierte saltos de línea dobles en `<p>` y simples en `<br>`. Sobre un
-bloque `<style>` multilinea eso mete `<p>`/`<br>` dentro del CSS y **el estilo deja de
-aplicar**. Es exactamente el bug que rompió el CSS antes.
-
-**KSES** — si el usuario que guarda no tiene la capability `unfiltered_html`, WordPress
-borra `<style>`, `<script>`, `<iframe>` y muchos atributos al guardar. En un WordPress de
-sitio único los administradores sí la tienen; en multisitio sólo el super admin.
-
-La solución que funciona: **envolver todo el HTML en un bloque Custom HTML** y guardarlo
-por REST. Cuando el contenido tiene bloques, el core de WordPress quita `wpautop` del
-filtro `the_content`, así que el CSS sobrevive intacto.
-
-`scripts/wp_rest.py set-content` hace ese envoltorio por ti:
-
-```bash
-# Página nueva, siempre en borrador primero
-python3 scripts/wp_rest.py create-page --file page.html \
-  --title "Curso X" --slug "curso-x" --status draft
-
-# O reemplazar el contenido de una existente
-python3 scripts/wp_rest.py set-content 1234 --file page.html --status draft
-```
-
-Reglas duras:
-
-- **Siempre `--status draft` en la primera escritura.** Publicar es el paso 10, con
-  confirmación del usuario.
-- **Nunca edites contenido pegando en el editor del navegador.** Es donde se pierde
-  contenido por accidente (selección incompleta, autoguardado a medias).
-- **Antes de sobrescribir una página existente, guarda un respaldo:**
-  ```bash
-  python3 scripts/wp_rest.py get-page 1234 --save-content backup-1234.html
-  ```
-  Dile al usuario dónde quedó el respaldo. Si algo sale mal, se restaura con
-  `set-content 1234 --file backup-1234.html --raw`.
-- El script rechaza escribir un contenido vacío o sospechosamente más corto que el
-  respaldo salvo que pases `--allow-shrink`. No lo pases sin preguntar.
-
-## 7. Arreglos de tema
-
-Dos arreglos que **siempre** hacen falta en estos sitios (tema Hello Elementor). Los
-detalles y el CSS exacto están en `references/theme-fixes.md` — léelo antes de aplicarlos.
-
-**a) Quitar el encajonado de 1140px.** El tema mete el contenido en un contenedor
-angosto y el diseño full-bleed se ve como una columna en el centro. Dos vías, en orden
-de preferencia:
-1. Cambiar el template de la página a `elementor_header_footer` (ancho completo,
-   conservando header y footer) o `elementor_canvas` (sin header ni footer). Se hace por
-   REST con `--template`.
-2. Si no hay Elementor o el template no basta, CSS acotado a esa página (`.page-id-N`)
-   dentro del mismo bloque HTML.
-
-**b) Ocultar el título gris del tema sin tocar el slug ni el SEO.** El título de
-WordPress aparece encima del diseño y sobra, porque el HTML ya trae su propio hero.
-**Nunca vacíes el campo de título** para ocultarlo: eso cambia el permalink, rompe
-breadcrumbs y deja el SEO sin título. Se oculta con CSS acotado a `.page-id-N`.
-
-Ambos se aplican con:
-
-```bash
-python3 scripts/wp_rest.py apply-theme-fix 1234 --full-bleed --hide-title
-```
-
-Después **mira la página renderizada** (no sólo el editor) y confirma que el diseño llega
-de borde a borde y que no hay título duplicado. Si el encajonado persiste, `theme-fixes.md`
-trae un snippet de consola para identificar qué elemento está poniendo el `max-width`.
-
-## 8. Auditar los CTAs
-
-No basta con revisar el botón principal. Revisa **todos** los enlaces:
-
-```bash
-python3 scripts/check_ctas.py page.html
-```
-
-Marca como fallo: `href="#"`, `href=""`, `javascript:void(0)`, `example.com`,
-placeholders tipo `TU-LINK`/`your-link`/`TODO`, y `http://` en un sitio que sirve HTTPS.
-
-Presenta al usuario la lista agrupada por destino ("6 botones → checkout X, 1 botón →
-`#`") y pide el link real para los que falten. Corrige en `page.html` y vuelve a subir con
-`set-content`. Un botón secundario apuntando a `#` es una venta perdida silenciosa.
-
-## 9. Verificar que el guardado se aplicó
-
-El editor de WordPress guarda **autoguardados** en una revisión aparte: la pantalla puede
-decir "guardado" y la página pública seguir con el contenido viejo. No confíes en la UI.
-
-```bash
-python3 scripts/wp_rest.py verify 1234 --file page.html
-```
-
-Compara el contenido realmente almacenado contra tu archivo y reporta diferencias. Además:
-
-- Trae la URL pública con `curl -s <url> | grep -c "<marca única del diseño>"` y confirma
-  que la marca aparece.
-- Si hay caché (LiteSpeed/Hostinger), purga y vuelve a comprobar; ver `troubleshooting.md`.
-
-Si `verify` marca diferencias, **no digas que quedó listo**: reporta qué se perdió. Si
-falta un `<style>` o desaparecieron atributos, es KSES → paso 5/6.
-
-## 10. Publicar
-
-Cuando el borrador esté verificado:
-
-1. Dale al usuario la URL de preview del borrador.
-2. Pregunta explícitamente si publica. **No publiques sin ese sí**, salvo que el usuario
-   ya haya dicho "publícalo" para esta página en concreto en esta conversación.
-3. Publica:
-   ```bash
-   python3 scripts/wp_rest.py set-status 1234 --status publish
-   ```
-4. Vuelve a verificar la URL pública ya publicada y entrega el link final.
-
-## Nunca
-
-- Publicar sin confirmación.
-- Vaciar el título para ocultarlo (rompe slug y SEO).
-- Sobrescribir una página existente sin respaldo previo.
-- Pegar HTML largo a mano en el editor del navegador.
-- Editar `style.css` del tema o archivos del tema padre para arreglar una sola página.
-- Desactivar plugins o cambiar ajustes globales del sitio para que encaje un diseño.
-- Guardar la Application Password en un archivo del repo o en un commit.
-- Tocar un sitio distinto al confirmado en el paso 1.
-
-## Archivos de esta skill
-
-| Archivo | Cuándo leerlo |
+| Script | Reemplaza / automatiza |
 |---|---|
-| `references/sitios.md` | Elegir sitio, URLs de wp-admin, notas por sitio |
-| `references/theme-fixes.md` | Paso 7: CSS exacto, templates, cómo diagnosticar el encajonado |
-| `references/rest-api.md` | Auth alternativa por nonce, endpoints, formato de `content` |
-| `references/troubleshooting.md` | 401/403, KSES, caché, Elementor, imágenes rotas |
-| `scripts/extract_pasted_images.py` | Paso 3a |
-| `scripts/wp_rest.py` | Pasos 3b, 5, 6, 7, 9, 10 |
-| `scripts/check_ctas.py` | Paso 8 |
+| `scripts/extract_pasted_images.py --list` | §2 — recorre el transcript y escribe a archivo cada imagen pegada, la más reciente primero. Úsalo en vez de escribir a mano el recorrido del JSON. |
+| `scripts/wp_rest.py upload-media <archivo>` | §4 — el mismo `curl`, con la Application Password leída del entorno y el `source_url` impreso. |
+| `scripts/check_ctas.py page.html` | §6 — audita **todos** los `<a>` del HTML exportado antes de subir, agrupados por destino, y sale con código 1 si hay `#`, vacíos o placeholders. Hace en local lo que el snippet de `javascript_tool` hace en vivo. |
+| `scripts/wp_rest.py verify <id> --file page.html` | §5.3 — compara lo que WordPress guardó de verdad contra tu archivo. Detecta el autoguardado que no se aplicó y el `<style>` que KSES borró. |
+
+Variables de entorno: `WP_SITE`, `WP_USER`, `WP_APP_PASSWORD`. Nunca las escribas en un
+archivo del repo.
+
+### Camino alternativo, 100% REST (sin probar en vivo)
+
+`wp_rest.py create-page` / `set-content` escriben el contenido por la REST API en vez de
+manejar el editor de código en el navegador, envolviéndolo en un bloque `<!-- wp:html -->`
+que desactiva `wpautop` en origen en vez de esquivarlo.
+
+**No tiene historial de uso real.** El procedimiento por navegador de §1–§8 es el que ya
+funcionó. Si usas el camino REST, verifica siempre con `verify` y con la página en vivo.
+
+### Referencias
+
+`references/sitios.md` · `references/theme-fixes.md` · `references/rest-api.md` ·
+`references/troubleshooting.md`

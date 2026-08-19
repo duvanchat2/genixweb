@@ -65,3 +65,29 @@ cambio de diseño y esta skill no rediseña.
 
 Pásalo a borrador de inmediato (`set-status <id> --status draft`), avisa al usuario, y
 publícalo en el correcto. No borres la página: el borrador conserva el contenido.
+
+## `file_upload` del navegador falla con un error de esquema
+
+`mcp__claude-in-chrome__file_upload` falla de forma intermitente con
+`paths: expected array, received undefined` aunque la ruta exista y el JSON sea correcto. Es
+específico de esa combinación de herramienta y entorno, no de tu llamada. No pierdas tiempo
+depurándolo: sube por REST (SKILL.md §4, o `scripts/wp_rest.py upload-media`).
+
+## Se borró el contenido de la página en el editor
+
+Pasó de verdad: un `Backspace` sobre un bloque de párrafo vacío en Gutenberg puede encadenar y
+vaciar la página entera. **`ctrl+z` inmediatamente** — no intentes arreglarlo escribiendo
+encima. Y no uses combinaciones `ctrl+a` / `Backspace` sobre bloques: usa el editor de código
+y el truco del setter nativo (§5).
+
+## El CSS que inyecté no aplica aunque está en el `<style>`
+
+Es wpautop (§6). Al insertar una regla con una línea en blanco antes o después, WordPress
+mete `</p>` y `<p>` literales dentro del CSS y el navegador descarta esa regla en silencio.
+Inserta la regla en una sola línea, pegada al `}` anterior, sin líneas en blanco alrededor.
+Comprueba siempre con `getComputedStyle` sobre el elemento, no leyendo el `<style>`.
+
+## Las capturas del navegador salen desactualizadas o cortadas
+
+Pasa. No verifiques nada importante sólo por captura: usa `javascript_tool` para contar
+enlaces, leer el título o medir anchos, que es determinista.

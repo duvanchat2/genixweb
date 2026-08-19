@@ -17,17 +17,22 @@ Skill de Claude Code que toma un HTML ya terminado (normalmente exportado de Cla
 Design) y lo deja publicado como página de WordPress en el sitio correcto, sin que
 WordPress rompa el CSS y sin romper el SEO.
 
-Cubre el flujo completo:
+Es un procedimiento probado en vivo: cada tropiezo documentado ocurrió de verdad en una
+sesión real.
 
 1. Entrar a wp-admin por SSO de Hostinger, sin contraseña.
 2. Extraer a archivo una imagen pegada en el chat.
-3. Subir imágenes por la REST API (el selector de archivos del navegador falla).
-4. Escribir el HTML sin que `wpautop` destroce el CSS, y con respaldo previo.
-5. Arreglos del tema Hello Elementor: quitar el encajonado de 1140px y ocultar el
-   título gris sin tocar el slug ni el SEO.
-6. Auditar **todos** los CTAs, no sólo el principal.
-7. Verificar que el guardado se aplicó de verdad (no un autoguardado).
-8. Pedir confirmación antes de publicar.
+3. Preparar el HTML exportado: quitar el envoltorio y corregir links de CTA en el origen.
+4. Subir imágenes por la REST API — el `file_upload` del navegador falla con un error de
+   esquema falso.
+5. Escribir el contenido por el editor de código con el truco del setter nativo, nunca
+   tecleando ni con `ctrl+a`.
+6. Arreglos del tema Hello Elementor: romper el encajonado de 1140px con `100vw`, y ocultar
+   el título gris sin tocar el campo de título (slug y SEO).
+7. Verificar que el guardado fue real y no un autoguardado, mirando las peticiones de red.
+8. Pedir confirmación antes de publicar y entregar el permalink limpio.
+
+Los scripts de `scripts/` automatizan los pasos 2, 4, la auditoría de CTAs y la verificación.
 
 ### Instalación
 

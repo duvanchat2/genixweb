@@ -1,67 +1,39 @@
 # Arreglos de tema (Hello Elementor)
 
 Dos problemas aparecen siempre al meter un HTML full-bleed en estos sitios.
+El SKILL.md §6 manda: esto lo amplía, no lo contradice.
 
 ## A. El encajonado (~1140px)
 
-**Síntoma:** el diseño se ve como una columna angosta centrada, con franjas blancas a los
-lados, aunque el HTML usa `width:100%`.
+**Síntoma:** el diseño se ve como una columna angosta centrada, con franjas a los lados, en
+escritorio y en móvil, aunque el HTML use `width:100%`.
 
-**Causa:** algún ancestro del contenido (el `<main>`/`<article>` del tema, o el contenedor
-"boxed" de Elementor) tiene `max-width` y padding lateral.
+**Causa:** Hello Elementor mete el contenido de la página en un contenedor con
+`max-width:1140px`.
 
-### Vía 1 — Cambiar el template de la página (preferida)
+### El arreglo probado
 
-Si Elementor está instalado, registra estos templates de página:
-
-| Template | Qué hace |
-|---|---|
-| `elementor_header_footer` | Ancho completo, **conserva** header y footer del sitio |
-| `elementor_canvas` | Lienzo limpio: **sin** header ni footer del tema |
-| `elementor_theme` | Layout normal del tema (el encajonado) |
-
-Para una landing exportada de Claude Design que ya trae su propio nav y footer,
-`elementor_canvas` suele ser lo correcto. Si el usuario quiere conservar el menú del sitio,
-`elementor_header_footer`.
-
-```bash
-python3 scripts/wp_rest.py set-template 1234 --template elementor_canvas
-```
-
-Pregunta al usuario cuál quiere si el HTML trae su propio menú/footer: es una decisión
-visible, no técnica.
-
-### Vía 2 — CSS acotado a la página
-
-Cuando no hay Elementor, o el template no elimina el cap, mete este CSS **dentro del mismo
-bloque HTML de la página** (sustituye `N` por el ID real):
+Es el de §6 del SKILL.md. Va en el propio `<style>` de la página, **una regla por línea y sin
+línea en blanco alrededor** (ver §6 sobre wpautop):
 
 ```css
-body.page-id-N .site-main,
-body.page-id-N .page-content,
-body.page-id-N .entry-content,
-body.page-id-N main,
-body.page-id-N article,
-body.page-id-N .container {
-  max-width: 100% !important;
-  width: 100% !important;
-  padding-left: 0 !important;
-  padding-right: 0 !important;
-  margin-left: 0 !important;
-  margin-right: 0 !important;
-}
+.navbar,.hero,section.section,footer{width:100vw;margin-left:calc(50% - 50vw);margin-right:calc(50% - 50vw)}
+body.wp-singular .site-main,body.wp-singular main{max-width:none!important;margin:0!important;padding:0!important}
 ```
 
-`apply-theme-fix --full-bleed` inyecta exactamente ese bloque con el ID correcto.
+Dos cosas importantes:
 
-**Acota siempre con `body.page-id-N`.** Sin ese prefijo el CSS se aplicaría a esa página
-únicamente igual (está inline), pero si alguien lo mueve a "CSS adicional" del
-personalizador reventaría el resto del sitio. El prefijo lo hace seguro por construcción.
+- **Ajusta la primera lista de selectores al HTML real.** `.navbar,.hero,section.section,footer`
+  son los contenedores de sección de un export concreto. Mira el HTML y usa los suyos.
+- **Los envoltorios internos se quedan como están.** Si el diseño tiene un `.wrap` centrado a
+  ~760px, no lo toques: sólo los contenedores de sección con fondo van a ancho completo.
 
-### Si el cap persiste
+El truco de `width:100vw` + `margin-left:calc(50% - 50vw)` saca el elemento de su contenedor
+sin tocar el tema. Es reversible y no afecta a ninguna otra página.
 
-Ejecuta esto en la consola del navegador sobre la página renderizada para descubrir qué
-elemento lo está poniendo:
+### Si aun así persiste
+
+Ejecuta esto sobre la página renderizada para ver qué elemento sigue poniendo el `max-width`:
 
 ```js
 [...document.querySelectorAll('body *')]
@@ -70,47 +42,53 @@ elemento lo está poniendo:
   .map(({el, s}) => `${el.tagName.toLowerCase()}.${[...el.classList].join('.')} → ${s.maxWidth}`)
 ```
 
-Añade el selector que devuelva a la lista del CSS de arriba. No toques `style.css` del tema.
+Añade ese selector a la segunda regla. **No toques `style.css` del tema.**
+
+### Alternativa: cambiar el template de la página
+
+Si Elementor está instalado registra estos templates, que quitan el encajonado sin CSS:
+
+| Template | Qué hace |
+|---|---|
+| `elementor_header_footer` | Ancho completo, **conserva** header y footer del sitio |
+| `elementor_canvas` | Lienzo limpio: **sin** header ni footer del tema |
+| `elementor_theme` | Layout normal del tema (el encajonado) |
+
+```bash
+python3 scripts/wp_rest.py set-template 1234 --template elementor_canvas
+```
+
+**Sin historial de uso real en estos sitios.** El CSS de arriba es el que ya funcionó. Si
+pruebas el template, verifica la página en vivo antes de darla por buena, y pregunta al
+usuario si quiere conservar el menú del sitio: `canvas` lo elimina.
 
 ## B. El título gris del tema
 
-**Síntoma:** encima del diseño aparece el título de WordPress (`<h1 class="entry-title">`,
-a veces dentro de `<header class="page-header">`), duplicando el hero del HTML.
+**Síntoma:** encima del diseño aparece el título de WordPress (`h1.entry-title`, normalmente
+dentro de `<header class="page-header">`), que sobra porque el HTML ya trae su propio hero.
 
-**Nunca lo arregles vaciando el campo de título.** El título alimenta el slug/permalink, el
-`<title>` de SEO, breadcrumbs, el listado del admin y los menús. Vaciarlo rompe todo eso.
-
-Arréglalo con CSS acotado:
+**Nunca lo arregles vaciando el campo de título.** Ese campo alimenta el slug/permalink, el
+título de SEO, breadcrumbs y los menús. Vaciarlo rompe todo eso.
 
 ```css
-body.page-id-N .page-header,
-body.page-id-N .entry-title,
-body.page-id-N .entry-header { display: none !important; }
+body.page-id-<ID> .page-header{display:none!important;margin:0!important;padding:0!important}
 ```
 
-`apply-theme-fix --hide-title` inyecta ese bloque.
+El `<ID>` sale de la clase `page-id-NNNN` que ya está en el `<body>`, o del parámetro `post=`
+de la URL del editor.
 
-Con `elementor_canvas` el tema no imprime título, así que este arreglo sobra — pero
-aplicarlo igual no hace daño y protege si luego cambian el template.
-
-## Cómo se inyectan
-
-`apply-theme-fix` escribe un bloque marcado dentro del contenido de la página:
-
-```html
-<!-- wp-genix-publish:theme-fix start -->
-<style> ... </style>
-<!-- wp-genix-publish:theme-fix end -->
-```
-
-Es idempotente: reemplaza el bloque anterior si ya existe, no lo duplica. Y es reversible:
-borrar ese bloque deja la página como estaba.
+Con `elementor_canvas` el tema no imprime título y este arreglo sobra — pero dejarlo puesto no
+hace daño y protege si alguien cambia el template después.
 
 ## Verificación
 
-Después de aplicar, carga la **URL pública** (no el editor) y comprueba:
+Después de cualquiera de los dos, carga la **URL pública** (no el editor) y comprueba con
+`getComputedStyle` sobre el elemento afectado, no de vista:
 
-- el diseño llega de borde a borde en escritorio;
-- no hay título duplicado;
-- en móvil no aparece scroll horizontal (`document.body.scrollWidth > window.innerWidth`
-  debe ser falso).
+```js
+getComputedStyle(document.querySelector('.hero')).width
+document.body.scrollWidth > window.innerWidth   // debe ser false: sin scroll horizontal
+```
+
+Que la regla esté dentro del `<style>` no significa que se haya aplicado: si wpautop la partió
+(§6), el parser de CSS la descarta en silencio.
